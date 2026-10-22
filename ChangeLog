@@ -1,4 +1,8 @@
 Changes since v1.5.3:
+	* Corrected the check-65 multi-tag BER fixture: two binary REAL values
+	  omitted their mantissas and were rejected after the issue #585 fix.
+	  Use complete encodings and verify decoded values; retain missing-mantissa
+	  inputs as rejection cases and cover truncation and malformed wrappers.
 	* Fixed issue #586: retain unknown APER open-type payloads from extensible
 	  information-object sets in a generated, owned ANY alternative, allowing
 	  decode/modify/re-encode. Keep known alternatives' presence indices and

@@ -57,9 +57,12 @@ static int emit_single_member_OER_constraint_value(arg_t *arg, asn1cnst_range_t 
 static int emit_single_member_OER_constraint_size(arg_t *arg, asn1cnst_range_t *range);
 static int emit_single_member_PER_constraint(arg_t *arg, asn1cnst_range_t *range, int juscountvalues, const char *type);
 static int emit_single_member_JER_constraint_size(arg_t *arg, asn1cnst_range_t *range);
-static int emit_member_OER_constraints(arg_t *arg, asn1p_expr_t *expr, const char *pfx);
-static int emit_member_PER_constraints(arg_t *arg, asn1p_expr_t *expr, const char *pfx);
-static int emit_member_JER_constraints(arg_t *arg, asn1p_expr_t *expr, const char *pfx);
+static int emit_member_OER_constraints(arg_t *arg, asn1p_expr_t *expr,
+                                       const char *pfx, int suffix_index);
+static int emit_member_PER_constraints(arg_t *arg, asn1p_expr_t *expr,
+                                       const char *pfx, int suffix_index);
+static int emit_member_JER_constraints(arg_t *arg, asn1p_expr_t *expr,
+                                       const char *pfx, int suffix_index);
 static int emit_member_table(arg_t *arg, asn1p_expr_t *expr,
                              asn1c_ioc_table_and_objset_t *);
 static int emit_tag2member_map(arg_t *arg, tag2el_t *tag2el, int tag2el_count, const char *opt_modifier);
@@ -1534,6 +1537,18 @@ asn1c_lang_C_type_CHOICE(arg_t *arg) {
 	return asn1c_lang_C_type_CHOICE_def(arg);
 }
 
+/*
+ * Purpose: Find an IOC type-field column in a resolved object-set table.
+ * Original source: asn1c C backend IOC support.
+ * Version/date: 2026-10-23.
+ * Parameters: arg is the generation context; opt_ioc is the resolved table;
+ * column_name identifies the requested field.
+ * Returns: Column index, zero for an empty set, or -1 for invalid input.
+ * Exceptions: None; invalid or incomplete tables return -1.
+ * Responsible party: asn1c maintainers.
+ * History: Reject malformed table rows before dereferencing them for #587.
+ * Example: Resolve the &Value column of PROTOCOL-IES.
+ */
 static ssize_t
 find_column_index(arg_t *arg, asn1c_ioc_table_and_objset_t *opt_ioc, const char *column_name) {
     (void)arg;
@@ -1545,7 +1560,15 @@ find_column_index(arg_t *arg, asn1c_ioc_table_and_objset_t *opt_ioc, const char 
     if(opt_ioc->ioct->rows == 0) {
         return 0;   /* No big deal. Just no data */
     } else {
+        if(!opt_ioc->ioct->row || !opt_ioc->ioct->row[0]
+        || (opt_ioc->ioct->row[0]->columns && !opt_ioc->ioct->row[0]->column)) {
+            return -1;
+        }
         for(size_t clmn = 0; clmn < opt_ioc->ioct->row[0]->columns; clmn++) {
+            if(!opt_ioc->ioct->row[0]->column[clmn].field
+            || !opt_ioc->ioct->row[0]->column[clmn].field->Identifier) {
+                return -1;
+            }
             if(strcmp(opt_ioc->ioct->row[0]->column[clmn].field->Identifier,
                       column_name) == 0) {
                 return clmn;
@@ -1619,19 +1642,25 @@ append_opaque_open_type(arg_t *arg, asn1p_expr_t *choice,
 /*
  * Purpose: Generate a typed CHOICE wrapper for an information-object open type.
  * Original source: asn1c C backend.
- * Version: 2026-10-22.
+ * Version: 2026-10-23.
  * Parameters: arg is the generation context; opt_ioc is the object-set table;
  *             column_name selects the class type field.
  * Returns: 0 on success, -1 on an invalid column or failed generation.
  * Errors: Emits a diagnostic for invalid table fields; does not throw.
  * Responsible party: asn1c maintainers.
- * History: Issue #586 appends opaque APER storage for extensible object sets.
+ * History: Issue #586 added opaque APER storage; #587 uses stable suffixes.
  * Example: Generate Field.value from IE.&Value({Known}{@id}).
  */
 static int
 asn1c_lang_C_OpenType(arg_t *arg, asn1c_ioc_table_and_objset_t *opt_ioc,
                       const char *column_name) {
-    arg_t tmp_arg = *arg;
+    arg_t tmp_arg;
+
+    if(!arg || !arg->expr || !opt_ioc || !opt_ioc->ioct || !column_name) {
+        errno = EINVAL;
+        return -1;
+    }
+    tmp_arg = *arg;
 
     ssize_t column_index = find_column_index(arg, opt_ioc, column_name);
     if(column_index < 0) {
@@ -1650,11 +1679,41 @@ asn1c_lang_C_OpenType(arg_t *arg, asn1c_ioc_table_and_objset_t *opt_ioc,
     }
     open_type_choice->meta_type = AMT_TYPE;
     open_type_choice->expr_type = ASN_CONSTR_OPEN_TYPE;
-    open_type_choice->_type_unique_index = arg->expr->_type_unique_index;
+    if(!opt_ioc || !opt_ioc->objset) {
+        FATAL("Cannot find an object set for open type %s", arg->expr->Identifier);
+        asn1p_expr_free(open_type_choice);
+        return -1;
+    }
+    /*
+     * A late parameterized member may still have suffix zero. Use its stable
+     * object-set suffix for the synthetic choice without mutating shared AST
+     * nodes that may already have been emitted to a header.
+     */
+    int unique_index = arg->expr->_type_unique_index;
+    if(unique_index == 0) unique_index = opt_ioc->objset->_type_unique_index;
+    if(unique_index == 0) {
+        FATAL("Cannot assign a unique suffix to open type %s",
+              arg->expr->Identifier);
+        asn1p_expr_free(open_type_choice);
+        return -1;
+    }
+    if(!arg->expr->parent_expr) {
+        FATAL("Open type %s has no containing type", arg->expr->Identifier);
+        asn1p_expr_free(open_type_choice);
+        return -1;
+    }
+    open_type_choice->_type_unique_index = unique_index;
     open_type_choice->parent_expr = arg->expr->parent_expr;
     open_type_choice->_anonymous_type = 1;
 
     for(size_t row = 0; row < opt_ioc->ioct->rows; row++) {
+        if(!opt_ioc->ioct->row || !opt_ioc->ioct->row[row]
+        || !opt_ioc->ioct->row[row]->column
+        || (size_t)column_index >= opt_ioc->ioct->row[row]->columns) {
+            FATAL("Invalid object-set row for open type %s", arg->expr->Identifier);
+            asn1p_expr_free(open_type_choice);
+            return -1;
+        }
         struct asn1p_ioc_cell_s *cell =
             &opt_ioc->ioct->row[row]->column[column_index];
 
@@ -1941,6 +2000,17 @@ asn1c_lang_C_type_REFERENCE(arg_t *arg) {
 	return asn1c_lang_C_type_SIMPLE_TYPE(arg);
 }
 
+/*
+ * Purpose: Generate a simple C type or an alias for an ASN.1 expression.
+ * Source: asn1c C backend, extended for parameterized aliases in 2026.
+ * Version: 2026-10-23.
+ * Input arg: Compiler context, including the expression and output streams.
+ * Return: Zero on success, or a negative value on generation failure.
+ * Exceptions: None; allocation or lookup failures are reported by return.
+ * Responsible party: asn1c maintainers.
+ * History: Emit struct-safe aliases before courtesy includes for issue #588.
+ * Example: Invoked by the C backend for a parameterized type reference.
+ */
 int
 asn1c_lang_C_type_SIMPLE_TYPE(arg_t *arg) {
 	asn1p_expr_t *expr = arg->expr;
@@ -2067,7 +2137,12 @@ asn1c_lang_C_type_SIMPLE_TYPE(arg_t *arg) {
 			free(base_include);
 		}
 
-		REDIR(OT_TYPE_DECLS);
+		/*
+		 * A struct-safe alias needs no definition of its source type. Emit it
+		 * before courtesy includes so an include cycle can use the alias while
+		 * this header's guard is active.
+		 */
+		REDIR(use_rsafe_typedef ? OT_FWD_DECLS : OT_TYPE_DECLS);
 
 		OUT("typedef %s\t",
 			asn1c_type_name(arg, arg->expr, use_rsafe_typedef ? TNF_RSAFE : TNF_CTYPE));
@@ -3663,17 +3738,63 @@ emit_single_member_JER_constraint_size(arg_t *arg, asn1cnst_range_t *range) {
 	return 0;
 }
 
+/*
+ * Purpose: Decide whether a member OER constraints table is generated.
+ * Original source: asn1c C backend member-table emitter.
+ * Version/date: 2026-10-23.
+ * Parameters: expr is the member; etype is its resolved ASN.1 type.
+ * Returns: Nonzero when the OER constraint emitter generates a table.
+ * Exceptions: None; the caller supplies a valid expression and resolved type.
+ * Responsible party: asn1c maintainers.
+ * History: Shared the eligibility rule between table and pointer emission.
+ * Example: A constrained CHOICE has an OER constraints table.
+ */
 static int
-emit_member_OER_constraints(arg_t *arg, asn1p_expr_t *expr, const char *pfx) {
+member_has_oer_constraints(asn1p_expr_t *expr, asn1p_expr_type_e etype) {
+	/* Match the types for which emit_member_OER_constraints emits a table. */
+	return expr->combined_constraints || etype == ASN_BASIC_ENUMERATED
+		|| etype == ASN_CONSTR_CHOICE;
+}
+
+/*
+ * Purpose: Determine whether a member PER constraints table is generated.
+ * Original source: asn1c C backend member-table emitter.
+ * Version/date: 2026-10-23.
+ * Parameters: expr is the member; etype is its resolved ASN.1 type.
+ * Returns: Nonzero when emit_member_PER_constraints emits a table.
+ * Exceptions: None; the caller supplies a valid expression and resolved type.
+ * Responsible party: asn1c maintainers.
+ * History: Centralized the table predicate for definitions and references.
+ * Example: A constrained INTEGER reference needs a table only when combined.
+ */
+static int
+member_has_per_constraints(asn1p_expr_t *expr, asn1p_expr_type_e etype) {
+	return member_has_oer_constraints(expr, etype)
+		|| (etype & ASN_STRING_KM_MASK);
+}
+
+/*
+ * Purpose: Generate member-specific OER constraint metadata.
+ * Original source: asn1c C backend member-table emitter.
+ * Version/date: 2026-10-23.
+ * Parameters: arg is the generation context; expr is the member; pfx is its name prefix.
+ * Returns: Zero on success; -1 if range generation fails.
+ * Exceptions: None; errors use the existing generation return path.
+ * Responsible party: asn1c maintainers.
+ * History: Uses the shared OER table eligibility predicate.
+ * Example: Generate an OER size constraint for a constrained OCTET STRING member.
+ */
+static int
+emit_member_OER_constraints(arg_t *arg, asn1p_expr_t *expr, const char *pfx,
+                            int suffix_index) {
     int save_target = arg->target->target;
     asn1cnst_range_t *range;
 	asn1p_expr_type_e etype;
 
     etype = expr_get_type(arg, expr);
 
-    if((arg->flags & A1C_GEN_OER)
-       && (expr->combined_constraints || etype == ASN_BASIC_ENUMERATED
-           || etype == ASN_CONSTR_CHOICE)) {
+	if((arg->flags & A1C_GEN_OER)
+	   && member_has_oer_constraints(expr, etype)) {
         /* Fall through */
     } else {
         return 0;
@@ -3694,7 +3815,7 @@ emit_member_OER_constraints(arg_t *arg, asn1p_expr_t *expr, const char *pfx) {
         REDIR(OT_FUNC_DECLS);
         OUT("extern asn_oer_constraints_t "
             "asn_OER_%s_%s_constr_%d;\n",
-            pfx, MKID(expr), expr->_type_unique_index);
+			pfx, MKID(expr), suffix_index);
     }
 
     REDIR(OT_CTDEFS);
@@ -3720,7 +3841,7 @@ emit_member_OER_constraints(arg_t *arg, asn1p_expr_t *expr, const char *pfx) {
     }
     OUT("asn_oer_constraints_t "
         "asn_OER_%s_%s_constr_%d CC_NOTUSED = {\n",
-        pfx, MKID(expr), expr->_type_unique_index);
+		pfx, MKID(expr), suffix_index);
 
     INDENT(+1);
 
@@ -3756,8 +3877,20 @@ emit_member_OER_constraints(arg_t *arg, asn1p_expr_t *expr, const char *pfx) {
     return 0;
 }
 
+/*
+ * Purpose: Generate member-specific PER constraint metadata.
+ * Original source: asn1c C backend member-table emitter.
+ * Version/date: 2026-10-23.
+ * Parameters: arg is the generation context; expr is the member; pfx is its name prefix.
+ * Returns: Zero on success; -1 if range generation fails.
+ * Exceptions: None; errors use the existing generation return path.
+ * Responsible party: asn1c maintainers.
+ * History: Uses the shared PER table eligibility predicate.
+ * Example: Generate a PER alphabet constraint for an IA5String member.
+ */
 static int
-emit_member_PER_constraints(arg_t *arg, asn1p_expr_t *expr, const char *pfx) {
+emit_member_PER_constraints(arg_t *arg, asn1p_expr_t *expr, const char *pfx,
+                            int suffix_index) {
 	int save_target = arg->target->target;
 	asn1cnst_range_t *range;
 	asn1p_expr_type_e etype;
@@ -3765,12 +3898,7 @@ emit_member_PER_constraints(arg_t *arg, asn1p_expr_t *expr, const char *pfx) {
 	etype = expr_get_type(arg, expr);
 
 	if((arg->flags & (A1C_GEN_UPER | A1C_GEN_APER))
-	&& (expr->combined_constraints
-		|| etype == ASN_BASIC_ENUMERATED
-		|| etype == ASN_CONSTR_CHOICE
-		|| (etype & ASN_STRING_KM_MASK)
-        )
-	) {
+	&& member_has_per_constraints(expr, etype)) {
 		/* Fall through */
 	} else {
 		return 0;
@@ -3792,7 +3920,7 @@ emit_member_PER_constraints(arg_t *arg, asn1p_expr_t *expr, const char *pfx) {
 
 		OUT("extern asn_per_constraints_t "
 			"asn_PER_%s_%s_constr_%d;\n",
-			pfx, MKID(expr), expr->_type_unique_index);
+			pfx, MKID(expr), suffix_index);
 	}
 
 	REDIR(OT_CTDEFS);
@@ -3819,7 +3947,7 @@ emit_member_PER_constraints(arg_t *arg, asn1p_expr_t *expr, const char *pfx) {
 	}
 	OUT("asn_per_constraints_t "
 		"asn_PER_%s_%s_constr_%d CC_NOTUSED = {\n",
-		pfx, MKID(expr), expr->_type_unique_index);
+		pfx, MKID(expr), suffix_index);
 
 	INDENT(+1);
 
@@ -3983,33 +4111,33 @@ emit_member_PER_constraints(arg_t *arg, asn1p_expr_t *expr, const char *pfx) {
 		REDIR(OT_CODE);
 
 		OUT("static int asn_PER_MAP_%s_%d_v2c(unsigned int value) {\n",
-			MKID(expr), expr->_type_unique_index);
+			MKID(expr), suffix_index);
 		OUT("\tif(value >= sizeof(permitted_alphabet_table_%d)/"
 			"sizeof(permitted_alphabet_table_%d[0]))\n",
-			expr->_type_unique_index,
-			expr->_type_unique_index);
+			suffix_index,
+			suffix_index);
 		OUT("\t\treturn -1;\n");
 		OUT("\treturn permitted_alphabet_table_%d[value] - 1;\n",
-			expr->_type_unique_index);
+			suffix_index);
 		OUT("}\n");
 
 		OUT("static int asn_PER_MAP_%s_%d_c2v(unsigned int code) {\n",
-			MKID(expr), expr->_type_unique_index);
+			MKID(expr), suffix_index);
 		OUT("\tif(code >= sizeof(permitted_alphabet_code2value_%d)/"
 			"sizeof(permitted_alphabet_code2value_%d[0]))\n",
-			expr->_type_unique_index,
-			expr->_type_unique_index);
+			suffix_index,
+			suffix_index);
 		OUT("\t\treturn -1;\n");
 		OUT("\treturn permitted_alphabet_code2value_%d[code];\n",
-			expr->_type_unique_index);
+			suffix_index);
 		OUT("}\n");
 
 		REDIR(old_target);
 
 		OUT("asn_PER_MAP_%s_%d_v2c,\t/* Value to PER code map */\n",
-			MKID(expr), expr->_type_unique_index);
+			MKID(expr), suffix_index);
 		OUT("asn_PER_MAP_%s_%d_c2v\t/* PER code to value map */\n",
-			MKID(expr), expr->_type_unique_index);
+			MKID(expr), suffix_index);
 	} else if(etype & ASN_STRING_KM_MASK) {
 		DEBUG("No PER value map necessary for %s", MKID(expr));
 		OUT("0, 0\t/* No PER character map necessary */\n");
@@ -4028,7 +4156,8 @@ emit_member_PER_constraints(arg_t *arg, asn1p_expr_t *expr, const char *pfx) {
 }
 
 static int
-emit_member_JER_constraints(arg_t *arg, asn1p_expr_t *expr, const char *pfx) {
+emit_member_JER_constraints(arg_t *arg, asn1p_expr_t *expr, const char *pfx,
+                            int suffix_index) {
     int save_target = arg->target->target;
     asn1cnst_range_t *range;
 	asn1p_expr_type_e etype;
@@ -4058,7 +4187,7 @@ emit_member_JER_constraints(arg_t *arg, asn1p_expr_t *expr, const char *pfx) {
         REDIR(OT_FUNC_DECLS);
         OUT("extern asn_jer_constraints_t "
             "asn_JER_%s_%s_constr_%d;\n",
-            pfx, MKID(expr), expr->_type_unique_index);
+			pfx, MKID(expr), suffix_index);
     }
 
     REDIR(OT_CTDEFS);
@@ -4084,7 +4213,7 @@ emit_member_JER_constraints(arg_t *arg, asn1p_expr_t *expr, const char *pfx) {
     }
     OUT("asn_jer_constraints_t "
         "asn_JER_%s_%s_constr_%d CC_NOTUSED = {\n",
-        pfx, MKID(expr), expr->_type_unique_index);
+		pfx, MKID(expr), suffix_index);
 
     INDENT(+1);
 
@@ -4797,7 +4926,9 @@ member_uses_descriptor_suffix(arg_t *arg, asn1p_expr_t *expr,
  * Example: Emit &asn_DEF_ANY for an opaque alternative.
  */
 static void
-emit_member_descriptor(arg_t *arg, asn1p_expr_t *expr, asn1c_ioc_table_and_objset_t *opt_ioc) {
+emit_member_descriptor(arg_t *arg, asn1p_expr_t *expr,
+                       asn1c_ioc_table_and_objset_t *opt_ioc,
+                       int suffix_index) {
 	int fits_unsigned_integer;
 	int complex_contents;
 
@@ -4834,7 +4965,7 @@ emit_member_descriptor(arg_t *arg, asn1p_expr_t *expr, asn1c_ioc_table_and_objse
 		 * was generated with static storage.
 		 */
 		if(member_uses_descriptor_suffix(arg, expr, opt_ioc, fits_unsigned_integer)) {
-			OUT("_%d", expr->_type_unique_index);
+			OUT("_%d", suffix_index);
 		}
 		OUT(",\n");
 	} else {
@@ -4855,16 +4986,21 @@ emit_member_descriptor(arg_t *arg, asn1p_expr_t *expr, asn1c_ioc_table_and_objse
  * Example: Emit the optional PER constraints pointer.
  */
 static void
-emit_member_encoding_constraints(arg_t *arg, asn1p_expr_t *expr) {
+emit_member_encoding_constraints(arg_t *arg, asn1p_expr_t *expr,
+                                 int suffix_index, int parent_index) {
+    asn1p_expr_type_e etype = expr_get_type(arg, expr);
+    int has_oer_constraints = member_has_oer_constraints(expr, etype);
+    int has_per_constraints = member_has_per_constraints(expr, etype);
+
     OUT("{\n");
     INDENT(+1);
     OUT_NOINDENT("#if !defined(ASN_DISABLE_OER_SUPPORT)\n");
 	if(C99_MODE) OUT(".oer_constraints = ");
 	if(arg->flags & A1C_GEN_OER) {
-		if(expr->constraints) {
+		if(expr->constraints && has_oer_constraints) {
 			OUT("&asn_OER_memb_%s_constr_%d",
 				MKID(expr),
-				expr->_type_unique_index);
+				suffix_index);
 		} else {
 			OUT("0");
 		}
@@ -4876,10 +5012,10 @@ emit_member_encoding_constraints(arg_t *arg, asn1p_expr_t *expr) {
     OUT_NOINDENT("#if !defined(ASN_DISABLE_UPER_SUPPORT) || !defined(ASN_DISABLE_APER_SUPPORT)\n");
 	if(C99_MODE) OUT(".per_constraints = ");
 	if(arg->flags & (A1C_GEN_UPER | A1C_GEN_APER)) {
-		if(expr->constraints) {
+		if(expr->constraints && has_per_constraints) {
 			OUT("&asn_PER_memb_%s_constr_%d",
 				MKID(expr),
-				expr->_type_unique_index);
+				suffix_index);
 		} else {
 			OUT("0");
 		}
@@ -4895,7 +5031,7 @@ emit_member_encoding_constraints(arg_t *arg, asn1p_expr_t *expr) {
 		   || expr->encoding_control.encoding_type == EC_JER_NAME) {
 			OUT("&asn_JER_memb_%s_constr_%d",
 				MKID(expr),
-				expr->_type_unique_index);
+				suffix_index);
 		} else {
 			OUT("0");
 		}
@@ -4913,7 +5049,7 @@ emit_member_encoding_constraints(arg_t *arg, asn1p_expr_t *expr) {
 			if(expr->_anonymous_type >= 2)
 				id = asn1c_type_name(arg, expr, TNF_SAFE);
 			OUT("memb_%s_constraint_%d\n", id,
-				arg->expr->_type_unique_index);
+				parent_index);
 		}
 	} else {
 		OUT("0\n");
@@ -4947,13 +5083,14 @@ emit_member_encoding_constraints(arg_t *arg, asn1p_expr_t *expr) {
  * Example: Generate a constrained integer member checker.
  */
 static int
-emit_member_constraint_code(arg_t *arg, asn1p_expr_t *expr) {
+emit_member_constraint_code(arg_t *arg, asn1p_expr_t *expr,
+                             int suffix_index, int parent_index) {
 	int save_target;
 	arg_t tmp_arg;
 	const char *p;
 
 	if(!expr->constraints || (arg->flags & A1C_NO_CONSTRAINTS)) {
-		if(emit_member_JER_constraints(arg, expr, "memb"))
+		if(emit_member_JER_constraints(arg, expr, "memb", suffix_index))
 			return -1;
 		return 0;
 	}
@@ -4966,7 +5103,8 @@ emit_member_constraint_code(arg_t *arg, asn1p_expr_t *expr) {
 	else
 		p = MKID(expr);
 	OUT("static int\n");
-	OUT("memb_%s_constraint_%d(const asn_TYPE_descriptor_t *td, const void *sptr,\n", p, arg->expr->_type_unique_index);
+	OUT("memb_%s_constraint_%d(const asn_TYPE_descriptor_t *td, const void *sptr,\n",
+	    p, parent_index);
 	INDENT(+1);
 	OUT("\t\tasn_app_constraint_failed_f *ctfailcb, void *app_key) {\n");
 	tmp_arg = *arg;
@@ -4980,13 +5118,13 @@ emit_member_constraint_code(arg_t *arg, asn1p_expr_t *expr) {
 	OUT("}\n");
 	OUT("\n");
 
-	if(emit_member_OER_constraints(arg, expr, "memb"))
+	if(emit_member_OER_constraints(arg, expr, "memb", suffix_index))
 		return -1;
 
-	if(emit_member_PER_constraints(arg, expr, "memb"))
+	if(emit_member_PER_constraints(arg, expr, "memb", suffix_index))
 		return -1;
 
-	if(emit_member_JER_constraints(arg, expr, "memb"))
+	if(emit_member_JER_constraints(arg, expr, "memb", suffix_index))
 		return -1;
 
 	REDIR(save_target);
@@ -5007,9 +5145,17 @@ emit_member_constraint_code(arg_t *arg, asn1p_expr_t *expr) {
  */
 static int
 emit_member_table(arg_t *arg, asn1p_expr_t *expr, asn1c_ioc_table_and_objset_t *opt_ioc) {
+	int suffix_index = expr->_type_unique_index;
+	int parent_index = arg->expr->_type_unique_index;
+	if(opt_ioc && opt_ioc->objset) {
+		int objset_index = opt_ioc->objset->_type_unique_index;
+		if(suffix_index == 0) suffix_index = objset_index;
+		if(parent_index == 0) parent_index = objset_index;
+	}
+
 	/* Keep layout, descriptor, selector, and constraints in ABI field order. */
 	emit_member_layout(arg, expr, opt_ioc);
-	emit_member_descriptor(arg, expr, opt_ioc);
+	emit_member_descriptor(arg, expr, opt_ioc, suffix_index);
 
 	if(C99_MODE) OUT(".type_selector = ");
 	if(opt_ioc) {
@@ -5020,7 +5166,7 @@ emit_member_table(arg_t *arg, asn1p_expr_t *expr, asn1c_ioc_table_and_objset_t *
 	}
 	OUT(",\n");
 
-	emit_member_encoding_constraints(arg, expr);
+	emit_member_encoding_constraints(arg, expr, suffix_index, parent_index);
 	if(try_inline_default(arg, expr, 0)) {
 	} else {
 		OUT("0, 0, /* No default value */\n");
@@ -5035,7 +5181,7 @@ emit_member_table(arg_t *arg, asn1p_expr_t *expr, asn1c_ioc_table_and_objset_t *
 	OUT("},\n");
 	INDENT(-1);
 
-	return emit_member_constraint_code(arg, expr);
+	return emit_member_constraint_code(arg, expr, suffix_index, parent_index);
 }
 
 /**
@@ -5203,13 +5349,16 @@ emit_type_DEF(arg_t *arg, asn1p_expr_t *expr, enum tvm_compat tv_mode,
 	 * this slot NULL, making NativeEnumerated unable to determine range_bits.
 	 */
 
-	if(emit_member_OER_constraints(arg, expr, "type"))
+	if(emit_member_OER_constraints(arg, expr, "type",
+	                               expr->_type_unique_index))
 		return -1;
 
-	if(emit_member_PER_constraints(arg, expr, "type"))
+	if(emit_member_PER_constraints(arg, expr, "type",
+	                               expr->_type_unique_index))
 		return -1;
 
-	if(emit_member_JER_constraints(arg, expr, "type"))
+	if(emit_member_JER_constraints(arg, expr, "type",
+	                               expr->_type_unique_index))
 		return -1;
 	if(!(arg->flags & A1C_NO_CONSTRAINTS)
 	&& expr->combined_constraints

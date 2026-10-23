@@ -1,4 +1,7 @@
 Changes since v1.5.3:
+	* Corrected the issue #552 C regression to inspect the alias descriptor's
+	  inherited PER range instead of a generated constraint-table suffix, which
+	  changes when symbol indexes are allocated across the input.
 	* Fixed an infinite loop in generated constraint checkers exposed by
 	  randomized OCTET STRING value-constraint tests. Recompute the generated
 	  function name after constraint emission reuses the naming buffer, so

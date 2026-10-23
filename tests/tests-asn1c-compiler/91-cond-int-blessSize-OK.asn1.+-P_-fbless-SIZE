@@ -39,7 +39,8 @@ OK_Integer1_constraint(const asn_TYPE_descriptor_t *td, const void *sptr,
 	}
 	
 	/* prevent infinite recursion */
-	if(td->encoding_constraints.general_constraints != OK_Integer1_constraint) {
+	if(td->encoding_constraints.general_constraints
+	   && td->encoding_constraints.general_constraints != OK_Integer1_constraint) {
 		return td->encoding_constraints.general_constraints(td, sptr, ctfailcb, app_key);
 	} else {
 		return 0;
@@ -123,7 +124,8 @@ OK_Integer2_constraint(const asn_TYPE_descriptor_t *td, const void *sptr,
 	}
 	
 	/* prevent infinite recursion */
-	if(td->encoding_constraints.general_constraints != OK_Integer2_constraint) {
+	if(td->encoding_constraints.general_constraints
+	   && td->encoding_constraints.general_constraints != OK_Integer2_constraint) {
 		return td->encoding_constraints.general_constraints(td, sptr, ctfailcb, app_key);
 	} else {
 		return 0;
@@ -207,7 +209,8 @@ OK_Integer3_constraint(const asn_TYPE_descriptor_t *td, const void *sptr,
 	}
 	
 	/* prevent infinite recursion */
-	if(td->encoding_constraints.general_constraints != OK_Integer3_constraint) {
+	if(td->encoding_constraints.general_constraints
+	   && td->encoding_constraints.general_constraints != OK_Integer3_constraint) {
 		return td->encoding_constraints.general_constraints(td, sptr, ctfailcb, app_key);
 	} else {
 		return 0;
@@ -291,7 +294,8 @@ OK_Integer4_constraint(const asn_TYPE_descriptor_t *td, const void *sptr,
 	}
 	
 	/* prevent infinite recursion */
-	if(td->encoding_constraints.general_constraints != OK_Integer4_constraint) {
+	if(td->encoding_constraints.general_constraints
+	   && td->encoding_constraints.general_constraints != OK_Integer4_constraint) {
 		return td->encoding_constraints.general_constraints(td, sptr, ctfailcb, app_key);
 	} else {
 		return 0;
@@ -375,7 +379,8 @@ NO_Integer5_constraint(const asn_TYPE_descriptor_t *td, const void *sptr,
 	}
 	
 	/* prevent infinite recursion */
-	if(td->encoding_constraints.general_constraints != NO_Integer5_constraint) {
+	if(td->encoding_constraints.general_constraints
+	   && td->encoding_constraints.general_constraints != NO_Integer5_constraint) {
 		return td->encoding_constraints.general_constraints(td, sptr, ctfailcb, app_key);
 	} else {
 		return 0;

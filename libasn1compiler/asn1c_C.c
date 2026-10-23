@@ -2119,8 +2119,6 @@ asn1c_lang_C_type_SIMPLE_TYPE(arg_t *arg) {
 	 * Constraint checking.
 	 */
 	if(!(arg->flags & A1C_NO_CONSTRAINTS) && expr->combined_constraints) {
-		char *pcopy = asn1c_find_contained_type(arg, expr)
-				? strdup(MKID(expr)) : NULL;
 		p = MKID(expr);
 		if(HIDE_INNER_DEFS) OUT("static ");
 		OUT("int\n");
@@ -2132,9 +2130,14 @@ asn1c_lang_C_type_SIMPLE_TYPE(arg_t *arg) {
 		OUT("\n");
 		DEBUG("expr constraint checking code for %s", p);
 		if(asn1c_emit_constraint_checking_code(arg) == 1) {
-			if(pcopy) p = pcopy;
+			/* Constraint emission reuses MKID's shared naming buffer while
+			 * resolving base and contained types. Recompute our own name so
+			 * the generated guard compares against this function, not a base
+			 * type's callback (which would allow infinite self-recursion). */
+			p = MKID(expr);
 			OUT("/* prevent infinite recursion */\n");
-			OUT("if(td->encoding_constraints.general_constraints != ");
+			OUT("if(td->encoding_constraints.general_constraints\n");
+			OUT("   && td->encoding_constraints.general_constraints != ");
 			if(HIDE_INNER_DEFS)
 				OUT("%s_%d_constraint) {\n", p, expr->_type_unique_index);
 			else
@@ -2149,7 +2152,6 @@ asn1c_lang_C_type_SIMPLE_TYPE(arg_t *arg) {
 			INDENT(-1);
 			OUT("}\n");
 		}
-		free(pcopy);	/* NULL-safe */
 		INDENT(-1);
 		OUT("}\n");
 		OUT("\n");

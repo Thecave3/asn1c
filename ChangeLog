@@ -1,4 +1,10 @@
 Changes since v1.5.3:
+	* Fixed an infinite loop in generated constraint checkers exposed by
+	  randomized OCTET STRING value-constraint tests. Recompute the generated
+	  function name after constraint emission reuses the naming buffer, so
+	  the recursion guard compares against the checker itself. Safely handle
+	  an absent fallback callback. Regenerate affected C sources with the
+	  updated compiler; existing generated binaries retain the faulty guard.
 	* Corrected the check-65 multi-tag BER fixture: two binary REAL values
 	  omitted their mantissas and were rejected after the issue #585 fix.
 	  Use complete encodings and verify decoded values; retain missing-mantissa

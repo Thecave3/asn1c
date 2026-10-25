@@ -1,4 +1,10 @@
 Changes since v1.5.3:
+	* Corrected callback error handling in JER UniversalString and canonical
+	  XER SET OF encoders, and balanced JER CHOICE recursion depth when a child
+	  encoder fails. Custom XER TEXT BIT STRING generation now omits callback
+	  labels and callback-only variables when there are no named bits, so the
+	  generated source compiles with strict warning settings. Added focused
+	  failure-path and generated-code regressions.
 	* Removed an unreachable XER SEQUENCE encoder failure label left after
 	  callback handling moved into a helper; Apple Clang rejected the generated
 	  code under -Wall -Werror. Pass the configured compiler to the IEEE 1609

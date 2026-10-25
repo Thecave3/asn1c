@@ -2876,6 +2876,84 @@ encoding_type_description(enum asn1p_encoding_control_type_e type) {
 }
 
 /*
+ * Purpose: emit a XER TEXT encoder for BIT STRING named bits.
+ * Original source: BIT STRING branch of emit_custom_xer_encoder.
+ * Version/date: 1.0, 2026-10-24.
+ * Parameters: arg is the generator state; expr is the ASN.1 type; type_name is
+ * its generated C name.
+ * Returns: 1 after writing the custom encoder to the generated source.
+ * Errors: none; source output failures are handled by the generator framework.
+ * Responsible party: asn1c maintainers.
+ * History: extracted to isolate conditional callback-state emission.
+ * Use example: emit_text_bit_string_xer_encoder(arg, expr, MKID(expr)).
+ */
+static int
+emit_text_bit_string_xer_encoder(arg_t *arg, asn1p_expr_t *expr,
+                                 const char *type_name) {
+    asn1p_expr_t *v;
+    int has_named_bits = 0;
+
+    /* Emit callback-only state only when a named bit can call the callback. */
+    TQ_FOR(v, &(expr->members), next) {
+        if(v->expr_type == A1TC_UNIVERVAL) {
+            has_named_bits = 1;
+            break;
+        }
+    }
+
+    OUT("\n");
+    OUT("/* Custom XER encoder per ENCODING-CONTROL directive */\n");
+    OUT("static asn_enc_rval_t\n");
+    OUT("%s_encode_xer(const asn_TYPE_descriptor_t *td, const void *sptr,\n", type_name);
+    INDENT(+1);
+    OUT("int ilevel, enum xer_encoder_flags_e flags,\n");
+    OUT("asn_app_consume_bytes_f *cb, void *app_key) {\n");
+    INDENT(-1);
+    INDENT(+1);
+    OUT("const BIT_STRING_t *st = (const BIT_STRING_t *)sptr;\n");
+    OUT("asn_enc_rval_t er = {0, 0, 0};\n");
+    if(has_named_bits) OUT("int first = 1;\n");
+    OUT("(void)td;\n");
+    OUT("(void)ilevel;\n");
+    OUT("(void)flags;\n");
+    if(!has_named_bits) {
+        OUT("(void)cb;\n");
+        OUT("(void)app_key;\n");
+    }
+    OUT("if(!st || !st->buf) ASN__ENCODE_FAILED;\n");
+    TQ_FOR(v, &(expr->members), next) {
+        const char *wire_name;
+        if(v->expr_type != A1TC_UNIVERVAL) continue;
+        wire_name = v->encoding_control.replacement
+            ? v->encoding_control.replacement : v->Identifier;
+        OUT("if(st->size > %ld && (st->buf[%ld] & 0x%02x)) {\n",
+            (long)(v->value->value.v_integer / 8),
+            (long)(v->value->value.v_integer / 8),
+            0x80 >> (v->value->value.v_integer % 8));
+        INDENT(+1);
+        OUT("if(!first) ASN__CALLBACK(\" \", 1);\n");
+        OUT("ASN__CALLBACK(\"%s\", %ld);\n",
+            wire_name, (long)strlen(wire_name));
+        OUT("er.encoded += %ld + (first ? 0 : 1);\n",
+            (long)strlen(wire_name));
+        OUT("first = 0;\n");
+        INDENT(-1);
+        OUT("}\n");
+    }
+    OUT("ASN__ENCODED_OK(er);\n");
+    if(has_named_bits) {
+        OUT("cb_failed:\n");
+        INDENT(+1);
+        OUT("ASN__ENCODE_FAILED;\n");
+        INDENT(-1);
+    }
+    INDENT(-1);
+    OUT("}\n");
+    OUT("\n");
+    return 1;
+}
+
+/*
  * Generate custom XER encoder for types with ENCODING-CONTROL directives
  */
 static int
@@ -2890,51 +2968,7 @@ emit_custom_xer_encoder(arg_t *arg, asn1p_expr_t *expr) {
     asn1p_expr_type_e etype = expr_get_type(arg, expr);
 
     if(enc_type == EC_XER_TEXT && etype == ASN_BASIC_BIT_STRING) {
-        asn1p_expr_t *v;
-        OUT("\n");
-        OUT("/* Custom XER encoder per ENCODING-CONTROL directive */\n");
-        OUT("static asn_enc_rval_t\n");
-        OUT("%s_encode_xer(const asn_TYPE_descriptor_t *td, const void *sptr,\n", type_name);
-        INDENT(+1);
-        OUT("int ilevel, enum xer_encoder_flags_e flags,\n");
-        OUT("asn_app_consume_bytes_f *cb, void *app_key) {\n");
-        INDENT(-1);
-        INDENT(+1);
-        OUT("const BIT_STRING_t *st = (const BIT_STRING_t *)sptr;\n");
-        OUT("asn_enc_rval_t er = {0, 0, 0};\n");
-        OUT("int first = 1;\n");
-        OUT("(void)td;\n");
-        OUT("(void)ilevel;\n");
-        OUT("(void)flags;\n");
-        OUT("if(!st || !st->buf) ASN__ENCODE_FAILED;\n");
-        TQ_FOR(v, &(expr->members), next) {
-            const char *wire_name;
-            if(v->expr_type != A1TC_UNIVERVAL) continue;
-            wire_name = v->encoding_control.replacement
-                ? v->encoding_control.replacement : v->Identifier;
-            OUT("if(st->size > %ld && (st->buf[%ld] & 0x%02x)) {\n",
-                (long)(v->value->value.v_integer / 8),
-                (long)(v->value->value.v_integer / 8),
-                0x80 >> (v->value->value.v_integer % 8));
-            INDENT(+1);
-            OUT("if(!first) ASN__CALLBACK(\" \", 1);\n");
-            OUT("ASN__CALLBACK(\"%s\", %ld);\n",
-                wire_name, (long)strlen(wire_name));
-            OUT("er.encoded += %ld + (first ? 0 : 1);\n",
-                (long)strlen(wire_name));
-            OUT("first = 0;\n");
-            INDENT(-1);
-            OUT("}\n");
-        }
-        OUT("ASN__ENCODED_OK(er);\n");
-        OUT("cb_failed:\n");
-        INDENT(+1);
-        OUT("ASN__ENCODE_FAILED;\n");
-        INDENT(-1);
-        INDENT(-1);
-        OUT("}\n");
-        OUT("\n");
-        return 1;
+        return emit_text_bit_string_xer_encoder(arg, expr, type_name);
     }
     
     OUT("\n");
@@ -3026,6 +3060,16 @@ emit_custom_xer_decoder(arg_t *arg, asn1p_expr_t *expr) {
 
     if(enc_type == EC_XER_TEXT && etype == ASN_BASIC_BIT_STRING) {
         asn1p_expr_t *v;
+        int has_named_bits = 0;
+
+        /* Identify named bits before emitting state that only their parser uses. */
+        TQ_FOR(v, &(expr->members), next) {
+            if(v->expr_type == A1TC_UNIVERVAL) {
+                has_named_bits = 1;
+                break;
+            }
+        }
+
         GEN_INCLUDE_STD("asn_codecs_prim");
         OUT("\n");
         OUT("/* Custom XER decoder per ENCODING-CONTROL directive */\n");
@@ -3039,7 +3083,7 @@ emit_custom_xer_decoder(arg_t *arg, asn1p_expr_t *expr) {
         OUT("const char *p = (const char *)chunk_buf;\n");
         OUT("const char *end = p + chunk_size;\n");
         OUT("size_t max_bit = 0;\n");
-        OUT("int any = 0;\n");
+        if(has_named_bits) OUT("int any = 0;\n");
         OUT("(void)td;\n");
         TQ_FOR(v, &(expr->members), next) {
             if(v->expr_type != A1TC_UNIVERVAL) continue;
@@ -3053,37 +3097,43 @@ emit_custom_xer_decoder(arg_t *arg, asn1p_expr_t *expr) {
         INDENT(-1);
         OUT("memset(st->buf, 0, st->size);\n");
         OUT("st->bits_unused = (int)((8 - ((max_bit + 1) %% 8)) %% 8);\n");
-        OUT("while(p < end) {\n");
-        INDENT(+1);
-        OUT("const char *start;\n");
-        OUT("int matched = 0;\n");
-        OUT("while(p < end && (*p == 9 || *p == 10 || *p == 13 || *p == 32)) p++;\n");
-        OUT("if(p == end) break;\n");
-        OUT("start = p;\n");
-        OUT("while(p < end && *p != 9 && *p != 10 && *p != 13 && *p != 32) p++;\n");
-        TQ_FOR(v, &(expr->members), next) {
-            const char *wire_name;
-            long bit;
-            if(v->expr_type != A1TC_UNIVERVAL) continue;
-            wire_name = v->encoding_control.replacement
-                ? v->encoding_control.replacement : v->Identifier;
-            bit = (long)v->value->value.v_integer;
-            OUT("if(!matched && (size_t)(p - start) == %ld\n",
-                (long)strlen(wire_name));
+        if(has_named_bits) {
+            OUT("while(p < end) {\n");
             INDENT(+1);
-            OUT("&& memcmp(start, \"%s\", %ld) == 0) {\n",
-                wire_name, (long)strlen(wire_name));
-            OUT("st->buf[%ld] |= 0x%02x;\n",
-                bit / 8, 0x80 >> (bit % 8));
-            OUT("matched = 1;\n");
+            OUT("const char *start;\n");
+            OUT("int matched = 0;\n");
+            OUT("while(p < end && (*p == 9 || *p == 10 || *p == 13 || *p == 32)) p++;\n");
+            OUT("if(p == end) break;\n");
+            OUT("start = p;\n");
+            OUT("while(p < end && *p != 9 && *p != 10 && *p != 13 && *p != 32) p++;\n");
+            TQ_FOR(v, &(expr->members), next) {
+                const char *wire_name;
+                long bit;
+                if(v->expr_type != A1TC_UNIVERVAL) continue;
+                wire_name = v->encoding_control.replacement
+                    ? v->encoding_control.replacement : v->Identifier;
+                bit = (long)v->value->value.v_integer;
+                OUT("if(!matched && (size_t)(p - start) == %ld\n",
+                    (long)strlen(wire_name));
+                INDENT(+1);
+                OUT("&& memcmp(start, \"%s\", %ld) == 0) {\n",
+                    wire_name, (long)strlen(wire_name));
+                OUT("st->buf[%ld] |= 0x%02x;\n",
+                    bit / 8, 0x80 >> (bit % 8));
+                OUT("matched = 1;\n");
+                INDENT(-1);
+                OUT("}\n");
+            }
+            OUT("if(!matched) return XPBD_BROKEN_ENCODING;\n");
+            OUT("any = 1;\n");
             INDENT(-1);
             OUT("}\n");
+            OUT("return any ? XPBD_BODY_CONSUMED : XPBD_NOT_BODY_IGNORE;\n");
+        } else {
+            OUT("while(p < end && (*p == 9 || *p == 10 || *p == 13 || *p == 32)) p++;\n");
+            OUT("if(p < end) return XPBD_BROKEN_ENCODING;\n");
+            OUT("return XPBD_NOT_BODY_IGNORE;\n");
         }
-        OUT("if(!matched) return XPBD_BROKEN_ENCODING;\n");
-        OUT("any = 1;\n");
-        INDENT(-1);
-        OUT("}\n");
-        OUT("return any ? XPBD_BODY_CONSUMED : XPBD_NOT_BODY_IGNORE;\n");
         INDENT(-1);
         OUT("}\n");
         OUT("\n");

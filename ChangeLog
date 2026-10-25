@@ -1,4 +1,8 @@
 Changes since v1.5.3:
+	* Updated the 127-per-long compiler-output baseline after issue #590:
+	  its two inline unsigned INTEGER members now reference their concrete
+	  suffixed descriptors. This keeps check-parsing.sh aligned with generated
+	  output and checks the corrected naming in the existing PER fixture.
 	* Fixed issue #590: emit distinct suffixed descriptors for repeated,
 	  constrained native INTEGER members nested in separate CHOICE alternatives
 	  when compound names and fixed-width unsigned storage are enabled. Added a

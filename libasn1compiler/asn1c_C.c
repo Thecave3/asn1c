@@ -4938,14 +4938,15 @@ member_uses_concrete_descriptor(arg_t *arg, asn1p_expr_t *expr,
 /*
  * Purpose: Identify member descriptors that need a unique suffix.
  * Original source: asn1c C backend member descriptor selection.
- * Version: 2026-10-22.
+ * Version: 2026-10-25.
  * Parameters: arg is the generation context; expr is the member; opt_ioc is its IOC table;
  *             fits_unsigned_integer indicates inline native INTEGER specifics.
  * Returns: Nonzero when the descriptor property applies, zero otherwise.
  * Errors: None; arguments follow the internal compiler contract.
  * Responsible party: asn1c maintainers.
- * History: Extracted unchanged selection logic during issue #586.
- * Example: An embedded OPEN TYPE uses a concrete suffixed descriptor.
+ * History: Extracted during issue #586; issue #590 added native INTEGER
+ *          members to the embedded descriptor suffix rule.
+ * Example: A constrained inline INTEGER stored as uint64_t uses its suffixed descriptor.
  */
 static int
 member_uses_descriptor_suffix(arg_t *arg, asn1p_expr_t *expr,
@@ -4958,6 +4959,7 @@ member_uses_descriptor_suffix(arg_t *arg, asn1p_expr_t *expr,
 		   || (expr->parent_expr
 		       && ((expr->expr_type & ASN_CONSTR_MASK)
 		           || expr->expr_type == ASN_BASIC_ENUMERATED
+		           || fits_unsigned_integer
 		           || (expr->expr_type == ASN_BASIC_BIT_STRING
 		               && expr_elements_count(arg, expr))))
 		   || (expr->_anonymous_type && fits_unsigned_integer));

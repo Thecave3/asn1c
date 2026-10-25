@@ -1,4 +1,8 @@
 Changes since v1.5.3:
+	* Fixed issue #590: emit distinct suffixed descriptors for repeated,
+	  constrained native INTEGER members nested in separate CHOICE alternatives
+	  when compound names and fixed-width unsigned storage are enabled. Added a
+	  generated-code compile/link regression for uint32 and uint64 modes.
 	* Corrected callback error handling in JER UniversalString and canonical
 	  XER SET OF encoders, and balanced JER CHOICE recursion depth when a child
 	  encoder fails. Custom XER TEXT BIT STRING generation now omits callback

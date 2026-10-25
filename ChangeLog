@@ -1,4 +1,8 @@
 Changes since v1.5.3:
+	* Removed an unreachable XER SEQUENCE encoder failure label left after
+	  callback handling moved into a helper; Apple Clang rejected the generated
+	  code under -Wall -Werror. Pass the configured compiler to the IEEE 1609
+	  IOC test so its generated-code build uses Clang in the Clang CI job.
 	* Corrected the issue #552 C regression to inspect the alias descriptor's
 	  inherited PER range instead of a generated constraint-table suffix, which
 	  changes when symbol indexes are allocated across the input.

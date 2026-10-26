@@ -219,5 +219,49 @@ run_issue590_mode uint32
 run_issue590_mode uint64
 echo
 
+# ---------------------------------------------------------------------------
+# 7. GitHub issue #591: unconstrained INTEGER DEFAULT members may use
+#    INTEGER_t even when their default value fits in a C long. Compile the
+#    generated C and exercise each callback in all storage policies.
+# ---------------------------------------------------------------------------
+run_issue591_mode() {  # $1=integer-native-type mode
+    local mode="$1" g="$work/issue591_$1"
+    mkdir -p "$g"
+    if ! ( cd "$g" && "$ASN1C" -S "$SKELDIR" -fcompound-names \
+        -finteger-native-type="$mode" -no-gen-example -no-gen-random-fill \
+        "$here/issue-591.asn1" >/dev/null 2>&1 ); then
+        echo "FAIL: issue #591 generation failed in $mode mode"
+        fail=1
+        return
+    fi
+
+    cp "$here/test_issue591.c" "$g/"
+    if ! ( cd "$g" &&
+        for f in *.c; do
+            case "$f" in test_issue591.c) continue;; esac
+            if ! $CC -I. -c "$f" -o "${f%.c}.o"; then
+                echo "compile failed: $f ($mode mode)" >&2
+                exit 1
+            fi
+        done &&
+        $CC -I. test_issue591.c *.o -lm -o test_issue591 ); then
+        echo "FAIL: issue #591 generated sources did not compile and link in $mode mode"
+        fail=1
+        return
+    fi
+    if ! "$g/test_issue591"; then
+        echo "FAIL: issue #591 DEFAULT callbacks failed in $mode mode"
+        fail=1
+    else
+        echo "ok: issue #591 DEFAULT callbacks compile and run in $mode mode"
+    fi
+}
+
+echo "== issue #591 INTEGER DEFAULT storage =="
+for mode in auto int32 uint32 int64 uint64; do
+    run_issue591_mode "$mode"
+done
+echo
+
 if [ "$fail" = 0 ]; then echo "=== ALL TESTS PASSED ==="; else echo "=== FAILURES ==="; fi
 exit $fail

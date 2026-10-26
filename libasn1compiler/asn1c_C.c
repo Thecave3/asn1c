@@ -4338,11 +4338,26 @@ emit_default_bitstring_value(arg_t *arg, asn1p_value_t *v) {
 	OUT(" };\n");
 }
 
+/*
+ * Purpose: Emit inline DEFAULT callbacks for primitive ASN.1 members.
+ * Original source: The asn1c C code generator; storage selection follows
+ *                  asn1c_select_integer_storage().
+ * Version/date: 1.1, 2026-10-26.
+ * Parameters: arg is the generator context; expr is the member expression;
+ *             out selects descriptor references instead of definitions.
+ * Returns: One when a DEFAULT callback was emitted, zero when unsupported.
+ * Exceptions: None; generator output and allocation failures are handled by
+ *             the surrounding generator infrastructure.
+ * Responsible party: asn1c maintainers.
+ * History: Use the selected INTEGER storage for issue #591 DEFAULT callbacks.
+ * Example: INTEGER DEFAULT 1 with -finteger-native-type=uint64.
+ */
 static int
 try_inline_default(arg_t *arg, asn1p_expr_t *expr, int out) {
 	int save_target = arg->target->target;
 	asn1p_expr_type_e etype = expr_get_type(arg, expr);
 	int fits_long = 0;
+	char default_name[128];
 
 	switch(etype) {
 	case ASN_BASIC_BOOLEAN:
@@ -4355,21 +4370,29 @@ try_inline_default(arg_t *arg, asn1p_expr_t *expr, int out) {
 		    expr->marker.default_value->type != ATV_TRUE &&
 		    expr->marker.default_value->type != ATV_FALSE))
 			break;
-		if(!fits_long)
-			fits_long = asn1c_type_fits_long(arg, expr)!=FL_NOTFIT;
+		/* Keep negative literals in C identifiers without negating INT_MIN. */
+		if(asn1p_itoa_s(default_name, sizeof(default_name),
+		                  expr->marker.default_value->value.v_integer) < 0)
+			return 0;
+		if(default_name[0] == '-') default_name[0] = 'm';
+		/* INTEGER storage may remain INTEGER_t even when its value fits long. */
+		if(etype == ASN_BASIC_INTEGER)
+			fits_long = asn1c_select_integer_storage(arg, expr) != AISK_INTEGER_T;
+		else if(!fits_long)
+			fits_long = asn1c_type_fits_long(arg, expr) != FL_NOTFIT;
 		if(fits_long && !expr->marker.default_value->value.v_integer)
 			expr->marker.flags &= ~EM_INDIRECT;
 		if(!out) {
             if(C99_MODE) OUT(".default_value_cmp = ");
 			OUT("&asn_DFL_%d_cmp_%s,",
 				expr->_type_unique_index,
-				asn1p_itoa(expr->marker.default_value->value.v_integer));
+				default_name);
             OUT("\t/* Compare DEFAULT %s */\n",
 				asn1p_itoa(expr->marker.default_value->value.v_integer));
             if(C99_MODE) OUT(".default_value_set = ");
 			OUT("&asn_DFL_%d_set_%s,",
 				expr->_type_unique_index,
-				asn1p_itoa(expr->marker.default_value->value.v_integer));
+				default_name);
             OUT("\t/* Set DEFAULT %s */\n",
 				asn1p_itoa(expr->marker.default_value->value.v_integer));
 			return 1;
@@ -4378,7 +4401,7 @@ try_inline_default(arg_t *arg, asn1p_expr_t *expr, int out) {
 
 		OUT("static int asn_DFL_%d_cmp_%s(const void *sptr) {\n",
 			expr->_type_unique_index,
-			asn1p_itoa(expr->marker.default_value->value.v_integer));
+			default_name);
 		INDENT(+1);
 		OUT("const %s *st = sptr;\n", asn1c_type_name(arg, expr, TNF_CTYPE));
 		OUT("\n");
@@ -4403,7 +4426,7 @@ try_inline_default(arg_t *arg, asn1p_expr_t *expr, int out) {
 
 		OUT("static int asn_DFL_%d_set_%s(void **sptr) {\n",
 			expr->_type_unique_index,
-			asn1p_itoa(expr->marker.default_value->value.v_integer));
+			default_name);
 		INDENT(+1);
 		OUT("%s *st = *sptr;\n", asn1c_type_name(arg, expr, TNF_CTYPE));
 		OUT("\n");

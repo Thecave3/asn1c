@@ -1,4 +1,10 @@
 Changes since v1.5.3:
+	* Fixed issue #591: generate INTEGER DEFAULT setters and comparators
+	  according to the actual selected C storage type. Unconstrained INTEGER
+	  members in unsigned native modes now use INTEGER_t conversion callbacks
+	  instead of invalid scalar operators. Added generated-code and callback
+	  regressions for all integer-native storage modes. Encode negative DEFAULT
+	  values with an identifier-safe "m" suffix in callback names.
 	* Updated the 127-per-long compiler-output baseline after issue #590:
 	  its two inline unsigned INTEGER members now reference their concrete
 	  suffixed descriptors. This keeps check-parsing.sh aligned with generated

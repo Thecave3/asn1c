@@ -15,7 +15,7 @@ After building asn1c in-tree:
 ./run.sh /path/to/asn1c /path/to/skeletons
 ```
 
-The script exercises five areas:
+The script exercises six areas:
 
 1. **Command-line option parsing** — `auto`, `int32`, `uint32`, `int64`,
    `uint64` are accepted for `-finteger-native-type`, `32` and `64` are
@@ -35,6 +35,10 @@ The script exercises five areas:
    compiles all generated sources, and links/runs a descriptor check. This
    catches missing or incorrectly shared descriptors for constrained native
    INTEGER members nested in separate CHOICE alternatives.
+6. **GitHub issue #591** — generates [issue-591.asn1](issue-591.asn1) in all
+   five storage modes, compiles and links the resulting C, then calls each
+   DEFAULT setter and comparator. DER checks verify positive, zero, and
+   negative defaults for both native scalar and `INTEGER_t` members.
 
 ## Expected generated storage (`oversized-integers.asn1`)
 
